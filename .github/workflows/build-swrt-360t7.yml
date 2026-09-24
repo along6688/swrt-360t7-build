@@ -7,10 +7,16 @@ name: Build SWRT for Qihoo 360T7
 #     里面预装了全部编译依赖和 MTK 工具链(/home/docker/envs/toolchain.sh 自动挂链)
 #   - /mnt:/project 卷是官方 CI 的磁盘技巧: runner 的 /mnt 分区比主盘大,
 #     源码(约2.2GB)+编译产物都放这里, 避免磁盘写满
-#   - 官方自带的 .github/workflows/github-actions.yml 只做编译测试、不产出固件,
-#     本工作流在其基础上增加了固件收集与 Artifact 上传
+#   - GIT_PIN 固定在上游 CI 最后一次成功的提交(2026-07-07, 360t7 构建通过)。
+#     上游 2026-09-22 的提交导致 master 分支多机型编译失败(含 360t7),
+#     上游修复后, 可在手动触发时把 git_pin 填成 master 切回最新代码
 on:
   workflow_dispatch:
+    inputs:
+      git_pin:
+        description: '要编译的 commit SHA 或分支名(默认用最后验证通过的提交)'
+        required: false
+        default: ''
   push:
     branches: [ main, master ]
     paths:
@@ -19,6 +25,9 @@ on:
 concurrency:
   group: build-swrt-360t7
   cancel-in-progress: true
+
+env:
+  GIT_PIN: ${{ inputs.git_pin || '178b0feb9c61f79b19df09d56614bb32f2c0c038' }}
 
 jobs:
   build:
@@ -51,13 +60,20 @@ jobs:
         run: |
           cd /project
           rm -rf swrt-gpl
-          if git clone --depth 1 "$GIT_REPO" swrt-gpl; then
-            echo "clone OK"
-            cd swrt-gpl && git log --oneline -1
+          git init swrt-gpl
+          cd swrt-gpl
+          git remote add origin "$GIT_REPO"
+          # 浅拉取指定提交/分支 (GitHub 支持按 SHA fetch)
+          if git fetch --depth 1 origin "$GIT_PIN"; then
+            git checkout -qf FETCH_HEAD
+            echo "checkout OK -> $(git log --oneline -1)"
           else
-            echo "clone FAILED"
+            echo "fetch $GIT_PIN FAILED"
             exit 1
           fi
+          # 配置 git 身份: 构建脚本中的 git 操作可能需要提交者信息
+          git config user.email "builder@example.com"
+          git config user.name "builder"
 
       - name: 配置 MTK 工具链
         run: |
